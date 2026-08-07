@@ -1,7 +1,7 @@
 export default function AdditionalPage() {
   return (
     <s-page heading="Additional page">
-      <s-section heading="Multiple pages">
+      <s-section heading="Multiple pagesssss">
         <s-paragraph>
           The app template comes with an additional page which demonstrates how
           to create multiple pages within app navigation using{" "}
