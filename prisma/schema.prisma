@@ -32,3 +32,19 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+model ClientTicket {
+  id                Int      @id @default(autoincrement())
+  store             String
+  storeDomain       String
+  priority          String
+  subject           String
+  ticketDescription String
+  createdAt         DateTime @default(now())
+
+  @@index([storeDomain])
+}
+
+model TestTicket {
+  id    Int    @id @default(autoincrement())
+  title String
+}
