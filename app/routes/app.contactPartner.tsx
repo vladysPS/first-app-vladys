@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Resend } from 'resend';
 import type { ActionFunctionArgs, LoaderFunctionArgs} from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import {useFetcher} from "react-router";
@@ -21,12 +22,13 @@ async function getShopName(admin: AdminApiContext) {
       query getShopName {
         shop {
           name
+          email
         }
       }`,
   );
   const { data } = await response.json();
 
-  return data.shop.name as string;
+  return data.shop;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -40,6 +42,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session} = await authenticate.admin(request);
+  const shopInfo = await getShopName(admin);
+  const shopEmail = shopInfo.email;
+  const shopName = shopInfo.name;
+
+  console.log("**** searching for shopName and shopEmail", shopName);
 
   const formData = await request.formData();
   const priority = String(formData.get("priority") ?? "");
@@ -62,10 +69,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   
-  console.log("*** entered in action ***")
+  const resend = new Resend(process.env.RESEND_API_KEY);
 
-  const ticket = await prisma.clientTicket.create({
-    data: { store :  await getShopName(admin),
+  console.log("Sending email with Resend...", resend);
+
+  (async function () {
+  const { data, error } = await resend.emails.send({
+      from: `${shopName} <onboarding@resend.dev>`,
+      to: ['vladyslavk@pangostudio.com'],
+      subject: `${priority} | ${subject}`,
+      html: `<p>${ticketDescription}</p>`,
+    });
+
+    if (error) {
+      return console.error({ error });
+    }
+
+    console.log({ data });
+  })();
+
+ /*  const ticket = await prisma.clientTicket.create({
+    data: { store :  shopName,
             storeDomain: session.shop,  
             priority: priority,
             subject: subject,
@@ -74,7 +98,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           },
   }); 
    
-  return { ok: true as const, ticketId: ticket.id };
+  return { ok: true as const, ticketId: ticket.id }; */
 };
 
 export default function ContactPartner() {
@@ -107,10 +131,10 @@ export default function ContactPartner() {
               name="priority"
               error={errors?.priority}
             >
-              <s-option value="1">Baja</s-option>
-              <s-option value="2">Media</s-option>
-              <s-option value="3">Alta</s-option>
-              <s-option value="4">Urgente</s-option>
+              <s-option value="Baja">Baja</s-option>
+              <s-option value="Media">Media</s-option>
+              <s-option value="Alta">Alta</s-option>
+              <s-option value="Urgente">Urgente</s-option>
             </s-select>
           </s-box>
 
