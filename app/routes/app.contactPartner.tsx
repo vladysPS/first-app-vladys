@@ -1,8 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef} from "react";
 import { Resend } from 'resend';
 import type { ActionFunctionArgs, LoaderFunctionArgs} from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import {useFetcher} from "react-router";
+import {useFetcher, useLoaderData} from "react-router";
 import {authenticate} from "../shopify.server";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 
@@ -34,19 +34,28 @@ async function getShopName(admin: AdminApiContext) {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
+  const tickets = await prisma.clientTicket.findMany({
+    where: {
+      storeDomain: `${session.shop}`,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+
   return {
     storeName: await getShopName(admin),
     storeDomain: session.shop,
+    tickets: tickets,
   };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session} = await authenticate.admin(request);
   const shopInfo = await getShopName(admin);
-  const shopEmail = shopInfo.email;
+  const shopEmail = shopInfo.email; // need to validate email to be able to send with it 
   const shopName = shopInfo.name;
-
-  console.log("**** searching for shopName and shopEmail", shopName);
 
   const formData = await request.formData();
   const priority = String(formData.get("priority") ?? "");
@@ -88,24 +97,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.log({ data });
   })();
 
- /*  const ticket = await prisma.clientTicket.create({
+  const ticket = await prisma.clientTicket.create({
     data: { store :  shopName,
-            storeDomain: session.shop,  
+            storeDomain: session.shop,
             priority: priority,
             subject: subject,
             ticketDescription: ticketDescription,
+            state: "enviado",
             createdAt: new Date()
           },
-  }); 
-   
-  return { ok: true as const, ticketId: ticket.id }; */
+  });
+
+  return { ok: true as const, ticketId: ticket.id };
 };
 
 export default function ContactPartner() {
   const fetcher = useFetcher<typeof action>();
   const formRef = useRef<HTMLFormElement>(null);
   const shopify = useAppBridge();
-    
+
+  const STATE_TONE = {
+    enviado: "info",
+    leido: "caution",
+    procesando: "warning",
+    resuelto: "success",
+  };
+
+  const { tickets } = useLoaderData<typeof loader>();
+
   const isSending = fetcher.state !== "idle";
   const errors =
   fetcher.data && !fetcher.data.ok ? fetcher.data.errors : undefined;
@@ -162,10 +181,42 @@ export default function ContactPartner() {
 
           <s-box paddingBlockStart="base">
             <s-button type="submit">{isSending ? "Enviando..." : "Enviar"}</s-button>
-            {fetcher.data?.error && <p style={{ color: "red" }}>{fetcher.data.error}</p>}
           </s-box>
         </fetcher.Form>
       </s-section>
+      <s-section>
+        <s-paragraph>TICKETS EN CURSO</s-paragraph>
+
+        {tickets.length === 0 ? (
+          <s-box paddingBlockStart="small-100">
+            <s-paragraph>Todavía no has enviado ningún ticket.</s-paragraph>
+          </s-box>
+        ) : (
+          tickets.map((ticket) => (
+            <s-box key={ticket.id} paddingBlockStart="base">
+              <s-paragraph>
+                <s-stack direction="inline" gap="base" paddingBlockEnd="small-100">
+                  <s-badge size="base" tone={STATE_TONE[ticket.state] ?? "auto"}>ESTADO: {ticket.state}</s-badge> 
+                </s-stack>
+                <s-stack direction="inline" gap="base">
+                  <s-badge tone="caution">Prioridad: {ticket.priority}</s-badge>
+                  <s-badge size="base"> Asunto: {ticket.subject}</s-badge> 
+                </s-stack>
+              </s-paragraph>
+              <s-box paddingBlock="small-100">
+                <s-paragraph>{ticket.ticketDescription}</s-paragraph>
+                <s-paragraph>
+                  {new Date(ticket.createdAt).toLocaleDateString("es-ES")}
+                </s-paragraph>
+              </s-box>
+              <s-divider></s-divider>
+            </s-box>
+            
+          ))
+        )}
+      </s-section>
     </s-page>
+
+    
   );
 }

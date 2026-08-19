@@ -38,13 +38,9 @@ model ClientTicket {
   storeDomain       String
   priority          String
   subject           String
+  state             String
   ticketDescription String
   createdAt         DateTime @default(now())
 
   @@index([storeDomain])
-}
-
-model TestTicket {
-  id    Int    @id @default(autoincrement())
-  title String
 }
