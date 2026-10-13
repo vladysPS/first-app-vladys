@@ -1,4 +1,4 @@
-import {useLoaderData, useFetcher} from "react-router";
+import {useLoaderData, useFetcher, Link} from "react-router";
 import { useEffect, useState} from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs} from "react-router";
 import prisma from "../db.server";
@@ -7,7 +7,9 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 export const loader = async({request}:LoaderFunctionArgs)=>{
     await requireStaff(request);
-    const allTickets = await prisma.clientTicket.findMany();
+    const allTickets = await prisma.clientTicket.findMany({
+        orderBy: { createdAt: 'desc' },
+    });
     return { tickets: allTickets };
 }
 
@@ -100,6 +102,10 @@ export default function StaffPanel() {
                                     </s-table-cell>
                                     <s-table-cell>{ticket.subject}</s-table-cell>
                                     <s-table-cell>{new Date(ticket.createdAt).toLocaleDateString("es-ES")}</s-table-cell>
+                                    <s-table-cell><Link to={{
+                                        pathname: "/staff/details",
+                                        search: `?details=${ticket.id}`,
+                                    }}><s-button>Ver detalles</s-button></Link></s-table-cell>
                                 </s-table-row>
                             ))        
                         )}
