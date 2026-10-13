@@ -1,8 +1,10 @@
-import type { LoaderFunctionArgs } from "react-router";
-import { useLoaderData, Form } from "react-router";
+import type { LoaderFunctionArgs, ActionFunctionArgs} from "react-router";
+import { Resend } from 'resend';
+import { useLoaderData, useFetcher } from "react-router";
 import prisma from "../db.server";
 import { requireStaff } from "../staff-session.server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
+import { useEffect, useState } from "react"
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     await requireStaff(request);
@@ -35,8 +37,60 @@ const TICKET_STATE: Record<string, BadgeTone> = {
     resuelto: "critical",
 };
 
+export const action = async ({ request }: ActionFunctionArgs) => {
+    await requireStaff(request);
+
+    const id = Number(new URL(request.url).searchParams.get("details"));
+
+    const ticketDetails = await prisma.clientTicket.findUnique({ where: { id } });
+    if (!ticketDetails) {
+        throw new Response("Ticket no encontrado", { status: 404 });
+    }
+
+    const shopEmail = ticketDetails.email;
+
+    console.log("checking we have an email before sending,",shopEmail)
+
+
+    const formData = await request.formData();
+    const resend = new Resend(process.env.RESEND_API_KEY);
+
+    const responseSubject = String( formData.get("responseSubject") ?? "");
+    const responseMessage = String( formData.get("responseMessage") ?? "");
+    
+    // para utilizar el email del cliente necesitariamos verificar el nuestro en resend
+    const { data: emailData, error: emailError } = await resend.emails.send({
+        from: 'incidencias@pangoestudio.com',
+        to: [shopEmail, 'vladyslavk@pangostudio.com'],
+        subject: `${responseSubject}`,
+        html: `<p>${responseMessage}</p>`,
+    });
+
+    if (emailError) {
+        console.error("Resend failed to send the ticket email", emailError);
+        return { ok: false as const };
+    }
+
+    console.log("Ticket email sent", emailData);
+    return { ok: true as const };
+    
+}
+
 export default function StaffDetails() {
     const { ticketDetails } = useLoaderData<typeof loader>();
+    const fetcher = useFetcher<typeof action>();
+    const [saved, setSaved] = useState(false);
+    // cambiar la key vuelve a montar el formulario y lo deja vacío
+    const [formKey, setFormKey] = useState(0);
+
+    useEffect(() => {
+        if (fetcher.state === "idle" && fetcher.data?.ok) {
+            setSaved(true);
+            setFormKey((k) => k + 1);
+            const t = setTimeout(() => setSaved(false), 3000);
+            return () => clearTimeout(t);
+        }
+    }, [fetcher.state, fetcher.data]);
 
     const createdAt = new Date(ticketDetails.createdAt).toLocaleString("es-ES", {
         day: "2-digit",
@@ -79,6 +133,9 @@ export default function StaffDetails() {
 
                             <s-text type="strong">Fecha</s-text>
                             <s-text>{createdAt}</s-text>
+
+                            <s-text type="strong">Correo</s-text>
+                            <s-text>{ticketDetails.email}</s-text>
                         </s-grid>
                     </s-stack>
                 </s-section>
@@ -96,8 +153,11 @@ export default function StaffDetails() {
 
 
                 <s-section heading="Responder">
-                    <Form method="post">
+                    <fetcher.Form method="post" key={formKey}>
                         <s-stack direction="block" gap="base">
+                            {saved && (
+                                <s-banner tone="success">Respuesta enviada</s-banner>
+                            )}
                             <s-text-field
                                 label="Asunto"
                                 name="responseSubject"
@@ -114,12 +174,16 @@ export default function StaffDetails() {
                             ></s-text-area>
 
                             <s-stack direction="inline" justifyContent="end">
-                                <s-button type="submit" variant="primary">
+                                <s-button
+                                    type="submit"
+                                    variant="primary"
+                                    loading={fetcher.state !== "idle"}
+                                >
                                     Enviar respuesta
                                 </s-button>
                             </s-stack>
                         </s-stack>
-                    </Form>
+                    </fetcher.Form>
                 </s-section>
 
             </s-page>

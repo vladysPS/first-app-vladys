@@ -54,7 +54,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session} = await authenticate.admin(request);
   const shopInfo = await getShopName(admin);
-  const shopEmail = shopInfo.email; // need to validate email to be able to send with it 
+  const shopEmail = shopInfo.email; 
   const shopName = shopInfo.name;
 
   const formData = await request.formData();
@@ -81,21 +81,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const resend = new Resend(process.env.RESEND_API_KEY);
 
   console.log("Sending email with Resend...", resend);
+  const nombreFormateado = shopName
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toLowerCase();
 
-  (async function () {
-  const { data, error } = await resend.emails.send({
-      from: `${shopName} <onboarding@resend.dev>`,
-      to: ['vladyslavk@pangostudio.com'],
-      subject: `${priority} | ${subject}`,
-      html: `<p>${ticketDescription}</p>`,
-    });
+  const { data: emailData, error: emailError } = await resend.emails.send({
+    from: `${nombreFormateado}@pangoestudio.com`,
+    to: 'vladyslavk@pangostudio.com',
+    subject: `${priority} | ${subject}`,
+    html: `
+    <p>Correo de : ${shopEmail} </p>
+    <p>${ticketDescription}</p>`,
+    text: `Correo de : ${shopEmail} \n ${ticketDescription}`,
+  });
 
-    if (error) {
-      return console.error({ error });
-    }
-
-    console.log({ data });
-  })();
+  if (emailError) {
+    console.error("Resend failed to send the ticket email", emailError);
+  } else {
+    console.log("Ticket email sent", emailData);
+  }
 
   const ticket = await prisma.clientTicket.create({
     data: { store :  shopName,
@@ -103,6 +109,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             priority: priority,
             subject: subject,
             ticketDescription: ticketDescription,
+            email: shopEmail,
             state: "enviado",
             createdAt: new Date()
           },

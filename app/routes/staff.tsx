@@ -7,7 +7,9 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 export const loader = async({request}:LoaderFunctionArgs)=>{
     await requireStaff(request);
-    const allTickets = await prisma.clientTicket.findMany();
+    const allTickets = await prisma.clientTicket.findMany({
+        orderBy: { createdAt: 'desc' },
+    });
     return { tickets: allTickets };
 }
 
