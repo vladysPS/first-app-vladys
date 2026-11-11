@@ -68,7 +68,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (emailError) {
         console.error("Resend failed to send the ticket email", emailError);
-        return { ok: false as const };
+        return { ok: false as const, error: emailError.message };
     }
 
     console.log("Ticket email sent", emailData);
@@ -157,6 +157,11 @@ export default function StaffDetails() {
                         <s-stack direction="block" gap="base">
                             {saved && (
                                 <s-banner tone="success">Respuesta enviada</s-banner>
+                            )}
+                            {fetcher.state === "idle" && fetcher.data?.ok === false && (
+                                <s-banner tone="critical">
+                                    No se pudo enviar el email: {fetcher.data.error}
+                                </s-banner>
                             )}
                             <s-text-field
                                 label="Asunto"

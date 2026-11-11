@@ -115,7 +115,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           },
   });
 
-  return { ok: true as const, ticketId: ticket.id };
+  return {
+    ok: true as const,
+    ticketId: ticket.id,
+    emailError: emailError?.message,
+  };
 };
 
 export default function ContactPartner() {
@@ -138,7 +142,14 @@ export default function ContactPartner() {
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.ok) {
-      shopify.toast.show("Ticket enviado");
+      if (fetcher.data.emailError) {
+        shopify.toast.show(
+          `Ticket guardado, pero el email falló: ${fetcher.data.emailError}`,
+          { isError: true, duration: 8000 },
+        );
+      } else {
+        shopify.toast.show("Ticket enviado");
+      }
       formRef.current?.reset();
     }
   }, [fetcher.state, fetcher.data, shopify]);
