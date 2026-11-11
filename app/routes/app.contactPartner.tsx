@@ -74,52 +74,74 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (Object.keys(errors).length > 0) {
-    return {ok: false as const, errors};
+    return { ok: false as const, errors };
   }
 
-  
-  const resend = new Resend(process.env.RESEND_API_KEY);
-
-  console.log("Sending email with Resend...", resend);
   const nombreFormateado = shopName
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-zA-Z0-9]/g, '')
     .toLowerCase();
 
-  const { data: emailData, error: emailError } = await resend.emails.send({
-    from: `${nombreFormateado}@pangoestudio.com`,
-    to: 'vladyslavk@pangostudio.com',
-    subject: `${priority} | ${subject}`,
-    html: `
-    <p>Correo de : ${shopEmail} </p>
-    <p>${ticketDescription}</p>`,
-    text: `Correo de : ${shopEmail} \n ${ticketDescription}`,
-  });
+  // 1. Send the email. If it fails, stop here: the ticket is NOT stored.
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    const { error: emailError } = await resend.emails.send({
+      from: `${nombreFormateado}@pangoestudio.com`,
+      to: 'vladyslavk@pangostudio.com',
+      subject: `PRIORIDAD: ${priority} | ${subject}`,
+      html: `
+      <p><strong>PRIORIDAD: ${priority} </strong></p>
+      <p>Correo de : ${shopEmail} </p>
+      <p>${ticketDescription}</p>`,
+      text: `Correo de : ${shopEmail} \n ${ticketDescription}`,
+    });
 
-  if (emailError) {
-    console.error("Resend failed to send the ticket email", emailError);
-  } else {
-    console.log("Ticket email sent", emailData);
+    if (emailError) {
+      console.error("Resend failed to send the ticket email", emailError);
+      return {
+        ok: false as const,
+        errors: {} as FormErrors,
+        formError:
+          "No se pudo enviar la incidencia y no se ha guardado. Inténtalo de nuevo en unos minutos.",
+      };
+    }
+  } catch (err) {
+    // Network failure, missing API key, etc.
+    console.error("Resend threw while sending the ticket email", err);
+    return {
+      ok: false as const,
+      errors: {} as FormErrors,
+      formError:
+        "No se pudo conectar con el servicio de email. La incidencia no se ha guardado.",
+    };
   }
 
-  const ticket = await prisma.clientTicket.create({
-    data: { store :  shopName,
-            storeDomain: session.shop,
-            priority: priority,
-            subject: subject,
-            ticketDescription: ticketDescription,
-            email: shopEmail,
-            state: "enviado",
-            createdAt: new Date()
-          },
-  });
+  // 2. Store the ticket. If the DB fails, tell the user instead of crashing.
+  try {
+    const ticket = await prisma.clientTicket.create({
+      data: {
+        store: shopName,
+        storeDomain: session.shop,
+        priority,
+        subject,
+        ticketDescription,
+        email: shopEmail,
+        state: "enviado",
+        createdAt: new Date(),
+      },
+    });
 
-  return {
-    ok: true as const,
-    ticketId: ticket.id,
-    emailError: emailError?.message,
-  };
+    return { ok: true as const, ticketId: ticket.id };
+  } catch (err) {
+    console.error("Prisma failed to store the ticket", err);
+    return {
+      ok: false as const,
+      errors: {} as FormErrors,
+      formError:
+        "El email se envió, pero la incidencia no se pudo guardar en la base de datos.",
+    };
+  }
 };
 
 export default function ContactPartner() {
@@ -137,20 +159,18 @@ export default function ContactPartner() {
   const { tickets } = useLoaderData<typeof loader>();
 
   const isSending = fetcher.state !== "idle";
-  const errors =
-  fetcher.data && !fetcher.data.ok ? fetcher.data.errors : undefined;
+  const failed = fetcher.data && !fetcher.data.ok ? fetcher.data : undefined;
+  const errors = failed?.errors;
+  const formError =
+    failed && "formError" in failed ? failed.formError : undefined;
 
   useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data?.ok) {
-      if (fetcher.data.emailError) {
-        shopify.toast.show(
-          `Ticket guardado, pero el email falló: ${fetcher.data.emailError}`,
-          { isError: true, duration: 8000 },
-        );
-      } else {
-        shopify.toast.show("Ticket enviado");
-      }
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    if (fetcher.data.ok) {
+      shopify.toast.show("Ticket enviado");
       formRef.current?.reset();
+    } else if ("formError" in fetcher.data && fetcher.data.formError) {
+      shopify.toast.show("Error al enviar la incidencia", { isError: true });
     }
   }, [fetcher.state, fetcher.data, shopify]);
 
@@ -158,6 +178,14 @@ export default function ContactPartner() {
     <s-page heading="FORMULARIO DE CONTACTO">
       <s-section>
         <s-paragraph>RELLENA EL FORMULARIO PARA CONTACTAR CON NOSOTROS :)</s-paragraph>
+
+        {formError && (
+          <s-box paddingBlockStart="small-100">
+            <s-banner tone="critical" heading="No se pudo enviar la incidencia">
+              {formError}
+            </s-banner>
+          </s-box>
+        )}
 
         <fetcher.Form ref={formRef} method="post">
           <s-box paddingBlockStart="small-100">
