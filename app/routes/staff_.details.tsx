@@ -37,43 +37,101 @@ const TICKET_STATE: Record<string, BadgeTone> = {
     resuelto: "critical",
 };
 
+type ResponseErrors = {
+    responseSubject?: string;
+    responseMessage?: string;
+};
+
 export const action = async ({ request }: ActionFunctionArgs) => {
     await requireStaff(request);
 
     const id = Number(new URL(request.url).searchParams.get("details"));
+    if (!Number.isInteger(id) || id <= 0) {
+        return {
+            ok: false as const,
+            errors: {} as ResponseErrors,
+            formError: "Ticket no válido.",
+        };
+    }
 
-    const ticketDetails = await prisma.clientTicket.findUnique({ where: { id } });
+    // 1. Load the ticket. A DB failure shows a banner instead of crashing the page.
+    let ticketDetails;
+    try {
+        ticketDetails = await prisma.clientTicket.findUnique({ where: { id } });
+    } catch (err) {
+        console.error("Prisma failed to load the ticket", err);
+        return {
+            ok: false as const,
+            errors: {} as ResponseErrors,
+            formError: "No se pudo cargar el ticket desde la base de datos. Inténtalo de nuevo.",
+        };
+    }
     if (!ticketDetails) {
-        throw new Response("Ticket no encontrado", { status: 404 });
+        return {
+            ok: false as const,
+            errors: {} as ResponseErrors,
+            formError: "El ticket ya no existe.",
+        };
     }
 
     const shopEmail = ticketDetails.email;
 
-    console.log("checking we have an email before sending,",shopEmail)
-
-
+    // 2. Validate the fields.
     const formData = await request.formData();
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    const responseSubject = String(formData.get("responseSubject") ?? "").trim();
+    const responseMessage = String(formData.get("responseMessage") ?? "").trim();
 
-    const responseSubject = String( formData.get("responseSubject") ?? "");
-    const responseMessage = String( formData.get("responseMessage") ?? "");
-    
-    // para utilizar el email del cliente necesitariamos verificar el nuestro en resend
-    const { data: emailData, error: emailError } = await resend.emails.send({
-        from: 'incidencias@pangoestudio.com',
-        to: [shopEmail, 'vladyslavk@pangostudio.com'],
-        subject: `${responseSubject}`,
-        html: `<p>${responseMessage}</p>`,
-    });
-
-    if (emailError) {
-        console.error("Resend failed to send the ticket email", emailError);
-        return { ok: false as const, error: emailError.message };
+    const errors: ResponseErrors = {};
+    if (!responseSubject) errors.responseSubject = "El asunto es obligatorio";
+    if (!responseMessage) {
+        errors.responseMessage = "El mensaje es obligatorio";
+    } else if (responseMessage.length < 10) {
+        errors.responseMessage = "Mínimo 10 carácteres";
+    }
+    if (Object.keys(errors).length > 0) {
+        return { ok: false as const, errors };
     }
 
-    console.log("Ticket email sent", emailData);
+    if (!shopEmail) {
+        return {
+            ok: false as const,
+            errors: {} as ResponseErrors,
+            formError: "Este ticket no tiene un email de cliente, no se puede responder.",
+        };
+    }
+
+    // 3. Send the email.
+    try {
+        const resend = new Resend(process.env.RESEND_API_KEY);
+        // para utilizar el email del cliente necesitariamos verificar el nuestro en resend
+        const { data: emailData, error: emailError } = await resend.emails.send({
+            from: 'incidencias@pangoestudio.com',
+            to: [shopEmail, 'vladyslavk@pangostudio.com'],
+            subject: responseSubject,
+            html: `<p>${responseMessage}</p>`,
+        });
+
+        if (emailError) {
+            console.error("Resend failed to send the response email", emailError);
+            return {
+                ok: false as const,
+                errors: {} as ResponseErrors,
+                formError: `No se pudo enviar la respuesta: ${emailError.message}`,
+            };
+        }
+
+        console.log("Response email sent", emailData);
+    } catch (err) {
+        // Network failure, missing API key, etc.
+        console.error("Resend threw while sending the response email", err);
+        return {
+            ok: false as const,
+            errors: {} as ResponseErrors,
+            formError: "No se pudo conectar con el servicio de email. La respuesta no se ha enviado.",
+        };
+    }
+
     return { ok: true as const };
-    
 }
 
 export default function StaffDetails() {
@@ -82,6 +140,11 @@ export default function StaffDetails() {
     const [saved, setSaved] = useState(false);
     // cambiar la key vuelve a montar el formulario y lo deja vacío
     const [formKey, setFormKey] = useState(0);
+
+    const failed =
+        fetcher.state === "idle" && fetcher.data && !fetcher.data.ok ? fetcher.data : undefined;
+    const errors = failed?.errors;
+    const formError = failed && "formError" in failed ? failed.formError : undefined;
 
     useEffect(() => {
         if (fetcher.state === "idle" && fetcher.data?.ok) {
@@ -158,9 +221,9 @@ export default function StaffDetails() {
                             {saved && (
                                 <s-banner tone="success">Respuesta enviada</s-banner>
                             )}
-                            {fetcher.state === "idle" && fetcher.data?.ok === false && (
-                                <s-banner tone="critical">
-                                    No se pudo enviar el email: {fetcher.data.error}
+                            {formError && (
+                                <s-banner tone="critical" heading="No se pudo enviar la respuesta">
+                                    {formError}
                                 </s-banner>
                             )}
                             <s-text-field
@@ -168,6 +231,7 @@ export default function StaffDetails() {
                                 name="responseSubject"
                                 defaultValue={`RE: ${ticketDetails.subject}`}
                                 required
+                                error={errors?.responseSubject}
                             ></s-text-field>
 
                             <s-text-area
@@ -176,6 +240,7 @@ export default function StaffDetails() {
                                 rows={6}
                                 placeholder="Escribe tu respuesta..."
                                 required
+                                error={errors?.responseMessage}
                             ></s-text-area>
 
                             <s-stack direction="inline" justifyContent="end">
